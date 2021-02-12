@@ -235,6 +235,46 @@ pub fn to_tape(s: &mut [u8]) -> Result<Vec<Node>> {
     Deserializer::from_slice(s).map(Deserializer::into_tape)
 }
 
+/// Validates the UTF-8 string
+/// # Errors
+///
+/// Will return Err(ErrorType::InvalidUTF8) on invalid UTF-8
+pub fn validate_utf8(input: &[u8]) -> std::result::Result<(), ErrorType> {
+    unsafe {
+        let len = input.len();
+        let mut state = SimdInput::new_utf8_checking_state();
+        let lenminus64: usize = if len < 64 { 0 } else { len as usize - 64 };
+        let mut idx: usize = 0;
+
+        while idx < lenminus64 {
+            /*
+            #ifndef _MSC_VER
+              __builtin_prefetch(buf + idx + 128);
+            #endif
+             */
+            let input = SimdInput::new(input.get_unchecked(idx as usize..));
+            input.check_utf8(&mut state);
+            idx += SIMDINPUT_LENGTH;
+        }
+
+        if idx < len {
+            let mut tmpbuf: [u8; SIMDINPUT_LENGTH] = [0x20; SIMDINPUT_LENGTH];
+            tmpbuf
+                .as_mut_ptr()
+                .copy_from(input.as_ptr().add(idx), len as usize - idx);
+            let input = SimdInput::new(&tmpbuf);
+
+            input.check_utf8(&mut state);
+        }
+
+        if SimdInput::check_utf8_errors(&state) {
+            Err(ErrorType::InvalidUTF8)
+        } else {
+            Ok(())
+        }
+    }
+}
+
 pub(crate) type Utf8CheckingState<T> = ProcessedUtfBytes<T>;
 
 pub(crate) trait Stage1Parse<T> {
